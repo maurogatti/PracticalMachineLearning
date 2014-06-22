@@ -1,0 +1,121 @@
+## Human activity recognition
+
+### Summary
+
+The *Weight Lifting Exercises Dataset* described and analyzed in the article *Qualitative Activity Recognition of Weight Lifting Exercises* by Velloso, E. et al. (see <a href="http://groupware.les.inf.puc-rio.br/har">Human Activity Recognition</a>) contains data about 5 difference barbell lifting exercises performed by 5 young people. These exercises have been classified in five categories (A, B, C, D, E). Category A corresponds to correct execution while B, C, D ,E are different errors of execution. The objective of our analysis is to assess the capability of the measured variables to predict the category to which exercises belong.
+
+### Analysis
+
+Our analysis will not be based on the original dataset that can be downloaded at 
+<a href="http://groupware.les.inf.puc-rio.br/static/WLE/WearableComputing_weight_lifting_exercises_biceps_curl_variations.csv">WLE dataset</a> but on files *pml-training.csv* and *pml-testing* files that can be downloaded at <a href="https://class.coursera.org/predmachlearn-002/human_grading/view/courses/972090/assessments/4/submissions">Practical machine learning</a>.
+
+### Data preparation
+
+We start by reading the data:
+
+```{r}
+training<-read.csv("pml-training.csv")
+testing<-read.csv("pml-testing.csv")
+```
+
+The subsequent step is to transform the output variable classe in a factor
+
+
+```{r}
+training$classe<-as.factor(training$classe)
+```
+
+The training data set contains 160 variables and 19622 observations. The test set contains 160 variables and 20 observations.
+
+To reduce the dataset we first remove near zero values:
+
+```{r}
+options(warn=-1)
+suppressPackageStartupMessages(library(caret))
+nzv <- nearZeroVar(training, saveMetrics=TRUE)
+omit <- which(nzv$nzv==TRUE)
+training <- training[,-omit]
+testing <- testing[,-omit]
+```
+
+This reduces the number of variables from 160 to 100. Variables can be further reduced by removing those that contain a high percentage of null values
+
+```{r}
+notNullColumns<-colSums(is.na(training)) < 19000
+training<-training[,notNullColumns]
+testing<-testing[,notNullColumns]
+```
+
+This reduces the number of variables to 59.
+
+Next step is the removal of row number predictor (variable X)
+
+```{r}
+training<-training[,-1]
+testing<-testing[,-1]
+```
+
+Since the problem is still too large for the computation capability of the system on which it will be run a random selection of 3000 rows is performed:
+
+```{r}
+numberOfRows<-3000
+set.seed(82845)
+trainInds <- sample(nrow(training), numberOfRows)
+training <- training[trainInds,]
+```
+
+### Data analysis
+
+Since out testing dataset is too small (20 observations) and does not contain the classe variable we split our training dataset into a training subset and a test subset:
+
+```{r}
+trainIndex <-createDataPartition(training$classe,p=0.6,list=FALSE)
+training.train<-training[trainIndex,]
+training.test<-training[-trainIndex,]
+```
+
+We are now ready to analyze our data using random forests:
+
+
+```{r}
+suppressMessages(library(randomForest))
+modFit<-train(classe~.,data=training.train,method="rf",prox=TRUE,preProcess=c("center", "scale"))
+modFit$results
+```
+
+Before launching the computation of the model we load the doParallel library to ensure that all processor resources are utilized during for the computation:
+
+```{r}
+library(doParallel)
+mpcluster <- makePSOCKcluster(4)  # Use 4 cores
+registerDoParallel(mpcluster)
+```
+
+We can now test our model on our test set:
+
+```{r}
+prediction<-predict(modFit,training.test)
+table(prediction,training.test$classe)
+confusionMatrix<-confusionMatrix(prediction,training.test$classe)
+confusionMatrix$byClass[,c(1,2,8)]
+```
+
+The accuracy provides us with the desired out-of-sample error estimate. Last but not least we apply our prediction to the original test set
+
+```{r}
+prediction<-predict(modFit,testing)
+prediction
+```
+
+```{r,echo=FALSE}
+pml_write_files = function(x){
+        n = length(x)
+        for(i in 1:n){
+                filename = paste0("problem_id_",i,".txt")
+                write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+        }
+}
+
+pml_write_files(prediction)
+```
+
